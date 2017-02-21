@@ -39,8 +39,8 @@ flags.DEFINE_string('rnn_type', 'bidirectional', 'rnn type propagation to use')
 flags.DEFINE_string('model_dir', 'models', 'Directory to save the model.')
 #gs://my-first-bucket-mosnoi/handwritten/m1/
 flags.DEFINE_string('board_path', 'TFboard', 'Directory to save board data ')
-flags.DEFINE_string('input_path_test', 'data/handwritten-test.tfrecords','get data for testing')
-flags.DEFINE_string('input_path', 'data/handwritten-test.tfrecords',
+flags.DEFINE_string('input_path_test', 'data/handwritten-test-0.tfrecords','get data for testing')
+flags.DEFINE_string('input_path', 'data/handwritten-test-0.tfrecords',
                     'get data for training, if filenameNr>1 the input data '
                     'should have {} in order to farmat it, and get more than one'
                     'file for training ')
@@ -73,6 +73,7 @@ class Model(object):
     self.bias = args.bias
     self.shuffle_batch = args.shuffle_batch
     self.ctc_decoder = args.ctc_decoder
+    self.slices = args.slices
     print(args)
     
   def weight_variable(self,shape,name="v"):
@@ -149,7 +150,7 @@ class Model(object):
             logits = tf.nn.dropout(logits, keep_prob)
 
         # Reshaping back to the original shape
-        logits = tf.reshape(logits, [ self.batch_size,self.width, num_classes])    
+        logits = tf.reshape(logits, [ self.batch_size,self.slices, num_classes])    
         logits =  tf.transpose(logits, [1,0,2])
 
         with tf.name_scope('CTC-loss'):
@@ -199,7 +200,7 @@ class Model(object):
                 # tf.VarLenFeature could be used
                 'seq_len': tf.FixedLenFeature([1], tf.int64),
                 'target': tf.VarLenFeature(tf.int64),     
-                'imageInput': tf.FixedLenFeature([self.height*self.width], tf.float32)
+                'imageInput': tf.FixedLenFeature([self.height*self.slices*self.width], tf.float32)
             })
         # now return the converted data
         imageInput = features['imageInput']
@@ -242,7 +243,7 @@ class Model(object):
         targets = tf.cast(targets, tf.int32)      
         seq_lens = tf.reshape(seq_lens,[self.batch_size])             
         
-        imageInputs = tf.reshape(imageInputs , [self.batch_size,self.height, self.width,1])
+        imageInputs = tf.reshape(imageInputs , [self.batch_size*self.slices,self.height, self.width,1])
         
         return imageInputs, seq_lens, targets
     
@@ -258,18 +259,19 @@ class Model(object):
         
         with tf.name_scope('preprocess'):
             hh,ww,chanels = conv4.get_shape().as_list()[1:4]
-            assert ww == self.width,'image does not have to become smaller in width'
+            #assert ww == self.width,'image does not have to become smaller in width'
             assert chanels == 256
             
-            h_pool2_flat = tf.transpose(conv4, [2, 0, 1, 3])
-            h_pool2_flat = tf.reshape(h_pool2_flat, [ww, self.batch_size ,hh*chanels])
+            h_pool2_flat = tf.reshape(conv4, [self.batch_size, self.slices ,hh*self.width*chanels])
+            h_pool2_flat = tf.transpose(h_pool2_flat, [1, 0, 2])
+            #h_pool2_flat = tf.reshape(h_pool2_flat, [ww, self.batch_size ,hh*chanels])
             
             # Permuting batch_size and n_steps
             #x = tf.transpose(h_pool2_flat, [2, 0, 1])
             # Reshape to (n_steps*batch_size, n_input)
-            x = tf.reshape(h_pool2_flat, [-1, hh*chanels])
+            x = tf.reshape(h_pool2_flat, [-1, hh*chanels*self.width])
             # Split to get a list of 'n_steps' tensors of shape (batch_size, n_input)
-            x = tf.split(0, ww, x)
+            x = tf.split(0, self.slices, x)
             
         with tf.name_scope('BRNN'):
             if self.initializer == "graves":
@@ -475,7 +477,8 @@ def run_sample(args):
         mpl.use('Agg')
         import matplotlib.pyplot as plt
         plt.figure(figsize=(16,4))
-        plt.imshow(np.asarray(x[0]).reshape((36,90))[:s[0]]+0.5, interpolation='nearest', aspect='auto', cmap=cm.jet)
+        xx = np.transpose(np.asarray(x).reshape((args.batch_size,args.slices,36,8)),(0,2,1,3)).reshape((args.batch_size,36,args.slices*8))
+        plt.imshow(xx[0]+0.5, interpolation='nearest', aspect='auto', cmap=cm.jet)
         plt.savefig("img.jpg")
         plt.clf() ; plt.cla()
         print("image saved:img.jpg")
@@ -575,9 +578,10 @@ def fast_run(args):
     sess.run(init)
     tf.train.start_queue_runners(sess=sess)
     xxx,sss,yyy=sess.run([xx,ss,yy])
-    #print(yyy)
-    #print(yyy[1])
+    print(yyy)
+    print(yyy[1])
     print('len:',xxx.shape)
+    '''
     import matplotlib.cm as cm
     import matplotlib as mpl
     mpl.use('Agg')
@@ -587,6 +591,7 @@ def fast_run(args):
     plt.imshow(np.asarray(xxx[0]).reshape((36,90))+0.5, interpolation='nearest', aspect='auto', cmap=cm.jet)
     plt.savefig("img.jpg")
     plt.clf() ; plt.cla()
+    '''
     
 def main(_):
     parser = argparse.ArgumentParser()
@@ -626,8 +631,9 @@ def main(_):
     parser.add_argument('--filenameNr', type=int, default=1, help='if more than one use format(i) to make the files input')
     
     #static param
-    parser.add_argument('--width', type=int, default=90, help='image width')
+    parser.add_argument('--width', type=int, default=8, help='image width')
     parser.add_argument('--height', type=int, default=36, help='image height')
+    parser.add_argument('--slices', type=int, default=23, help='image width')
     parser.add_argument('--num_classes', type=int, default=FLAGS.num_classes, help='number of classes')
     
     #defaults
