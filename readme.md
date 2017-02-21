@@ -32,7 +32,7 @@ tensorboard --logdir=gs://my-first-bucket-mosnoi/handwritten/m2/TFboard2 --port=
 ```shell
 rm -rf gs://my-first-bucket-mosnoi/handwritten3x200GRUGRID2
 
-gcloud beta ml jobs submit training handwritten_slicesADAM3x200LSTM \
+gcloud beta ml jobs submit training handwritten_slicesADAM3x200LSTM2 \
   --package-path=trainer \
   --module-name=trainer.run \
   --staging-bucket=gs://my-first-bucket-mosnoi/ \
@@ -41,8 +41,8 @@ gcloud beta ml jobs submit training handwritten_slicesADAM3x200LSTM \
   -- \
   --input_path gs://my-first-bucket-mosnoi/handwritten/m2/tf-data-slices/handwritten-test-{}.tfrecords \
   --input_path_test gs://my-first-bucket-mosnoi/handwritten/m2/tf-data-slices/handwritten-test-55.tfrecords \
-  --board_path gs://my-first-bucket-mosnoi/handwritten/m2/TFboard3 \
-  --model_dir gs://my-first-bucket-mosnoi/handwritten/m2/models3 \
+  --board_path gs://my-first-bucket-mosnoi/handwritten/m2/TFboard1_handwritten_slicesADAM3x200LSTM2 \
+  --model_dir gs://my-first-bucket-mosnoi/handwritten/m2/models1 \
   --filenameNr 50 \
   --save_step 5000 \
   --display_step 100 \
@@ -51,7 +51,7 @@ gcloud beta ml jobs submit training handwritten_slicesADAM3x200LSTM \
   --learning_rate 0.001 \
   --keep_prob 0.8 \
   --layers 3 \
-  --hidden 200 \
+  --hidden 250 \
   --rnn_cell LSTM \
   --optimizer ADAM \
   --initializer  graves \
@@ -63,6 +63,6 @@ gcloud beta ml jobs submit training handwritten_slicesADAM3x200LSTM \
   ```shell
   //--optimizer RMSP --momentum 0.9 --decay 0.95
   // python run.py --layers 1 --hidden 20 --rnn_cell GRUGRID2 --optimizer RMSP --insertLastState
-  // python run.py --sample --batch_size 1 --shuffle_batch  --layers 3  --hidden 200 --insertLastState
+  // python run.py --model_dir models1 --save_step 50  --sample --batch_size 1  --insertLastState
   ```
   

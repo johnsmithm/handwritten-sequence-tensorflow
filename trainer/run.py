@@ -423,7 +423,7 @@ class Model(object):
             except AttributeError:
                     self.summary_op = tf.merge_all_summaries()
 
-            self.saver = tf.train.Saver()
+            self.saver = tf.train.Saver(write_version=tf.train.SaverDef.V2)
             
             if self.gpu:
                 ### start session
