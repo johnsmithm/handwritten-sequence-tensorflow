@@ -14,6 +14,11 @@ In order to get a sample from trained model:
 python run.py --sample --shuffle_batch --batch_size 1 --input_path data/handwritten-test.tfrecords --input_path_test data/handwritten-test.tfrecords --model_dir models --board_path TFboard --filenameNr 1
 ```
 
+In order to see statistics in tensorboard:
+```shell
+tensorboard --logdir=gs://my-first-bucket-mosnoi/handwritten/m2/TFboard2 --port=8080
+```
+
 #params:
   * --rnn_cell \[LSTM,GRU,LSTMGRID2,GRUGRID2,BasicLSTM,LSTMGRID\]
   * --optimizer \[ADAM,RMSP\]
@@ -25,7 +30,9 @@ python run.py --sample --shuffle_batch --batch_size 1 --input_path data/handwrit
 
 ##Google cloud ML:
 ```shell
-gcloud beta ml jobs submit training handwritten3x200GRUGRID2 \
+rm -rf gs://my-first-bucket-mosnoi/handwritten3x200GRUGRID2
+
+gcloud beta ml jobs submit training handwrittenRMSP3x200LSTM \
   --package-path=trainer \
   --module-name=trainer.run \
   --staging-bucket=gs://my-first-bucket-mosnoi/ \
@@ -37,19 +44,18 @@ gcloud beta ml jobs submit training handwritten3x200GRUGRID2 \
   --board_path gs://my-first-bucket-mosnoi/handwritten/m2/TFboard2 \
   --model_dir gs://my-first-bucket-mosnoi/handwritten/m2/models2 \
   --filenameNr 50 \
-  --save_step 15000 \
+  --save_step 5000 \
   --display_step 100 \
-  --max_steps 40000 \
-  --save_step 100 \
-  --batch_size 20 \
-  --learning_rate 0.0001 \
+  --max_steps 10000 \
+  --batch_size 50 \
+  --learning_rate 0.001 \
   --keep_prob 0.8 \
   --layers 3 \
   --hidden 200 \
-  --rnn_cell GRUGRID2 \
-  --optimizer ADAM \
+  --rnn_cell LSTM \
+  --optimizer RMSP \
   --initializer  graves \
-  --bias 0.1 \
+  --bias -0.1 \
   --shuffle_batch \
   --gpu
   ```
