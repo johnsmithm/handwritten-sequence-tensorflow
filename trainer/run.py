@@ -90,11 +90,11 @@ class Model(object):
   def conv2d(self,x, W):
       return tf.nn.conv2d(x, W, strides=[1, 1, 1, 1], padding='SAME')
 
-  def max_pool_2x2(self,x,h=2,w=1):
+  def max_pool_2x2(self,x,h=2,w=2):
       return tf.nn.max_pool(x, ksize=[1, h, w, 1],
                         strides=[1, h, w, 1], padding='SAME')
 
-  def convLayer(self,data,chanels_out,size_window=5,keep_prob=0.8,maxPool=False,scopeN="l1"):
+  def convLayer(self,data,chanels_out,size_window=5,keep_prob=0.8,maxPool=None,scopeN="l1"):
     """Implement convolutional layer
     @param data: [batch,h,w,chanels]
     @param chanels_out: number of out chanels
@@ -113,8 +113,8 @@ class Model(object):
         h_conv1 = tf.nn.relu(self.conv2d(data, W_conv1) + b_conv1)
         if keep_prob and keep_prob!=1 and self.train_b:
             h_conv1 = tf.nn.dropout(h_conv1, keep_prob)
-        if maxPool:
-            h_conv1 = self.max_pool_2x2(h_conv1)
+        if maxPool is not None:
+            h_conv1 = self.max_pool_2x2(h_conv1,maxPool[0],maxPool[1])
     return h_conv1
 
 
@@ -150,8 +150,8 @@ class Model(object):
             logits = tf.nn.dropout(logits, keep_prob)
 
         # Reshaping back to the original shape
-        logits = tf.reshape(logits, [ self.batch_size,self.slices, num_classes])    
-        logits =  tf.transpose(logits, [1,0,2])
+        logits = tf.reshape(logits, [ self.slices, self.batch_size, num_classes])    
+        #logits =  tf.transpose(logits, [1,0,2])
 
         with tf.name_scope('CTC-loss'):
             loss = ctc_ops.ctc_loss(logits, targets, seq_len)
@@ -252,24 +252,24 @@ class Model(object):
         [imageInputs, seq_len] = batch_x
         tf.summary.image("images", imageInputs)
         with tf.name_scope('convLayers'):
-            conv1 = self.convLayer(imageInputs, 32 ,              scopeN="l1",keep_prob=self.keep_prob,maxPool=True)
-            conv2 = self.convLayer(conv1,       64 ,              scopeN="l2",keep_prob=self.keep_prob,maxPool=True)
-            conv3 = self.convLayer(conv2,      128 ,size_window=3,scopeN="l3",keep_prob=self.keep_prob,maxPool=False)
-            conv4 = self.convLayer(conv3,      256 ,size_window=3,scopeN="l4",keep_prob=self.keep_prob,maxPool=False)
+            conv1 = self.convLayer(imageInputs, 32 ,              scopeN="l1",keep_prob=self.keep_prob,maxPool=[2,2])
+            conv2 = self.convLayer(conv1,       64 ,              scopeN="l2",keep_prob=self.keep_prob,maxPool=[2,2])
+            conv3 = self.convLayer(conv2,      128 ,size_window=3,scopeN="l3",keep_prob=self.keep_prob,maxPool=[2,1])
+            conv4 = self.convLayer(conv3,      256 ,size_window=2,scopeN="l4",keep_prob=self.keep_prob,maxPool=[2,1])
         
         with tf.name_scope('preprocess'):
             hh,ww,chanels = conv4.get_shape().as_list()[1:4]
             #assert ww == self.width,'image does not have to become smaller in width'
             assert chanels == 256
             
-            h_pool2_flat = tf.reshape(conv4, [self.batch_size, self.slices ,hh*self.width*chanels])
+            h_pool2_flat = tf.reshape(conv4, [self.batch_size, self.slices ,hh*ww*chanels])
             h_pool2_flat = tf.transpose(h_pool2_flat, [1, 0, 2])
             #h_pool2_flat = tf.reshape(h_pool2_flat, [ww, self.batch_size ,hh*chanels])
             
             # Permuting batch_size and n_steps
             #x = tf.transpose(h_pool2_flat, [2, 0, 1])
             # Reshape to (n_steps*batch_size, n_input)
-            x = tf.reshape(h_pool2_flat, [-1, hh*chanels*self.width])
+            x = tf.reshape(h_pool2_flat, [-1, hh*chanels*ww])
             # Split to get a list of 'n_steps' tensors of shape (batch_size, n_input)
             x = tf.split(0, self.slices, x)
             
@@ -336,7 +336,7 @@ class Model(object):
                                                                                  dtype=tf.float32,
                                                                                  initial_state_fw=self.reset_state_stackf,
                                                                                  initial_state_bw=self.reset_state_stackb)
-            #= states
+            #= outputs [times,batch,hidden*2]
             y_predict = tf.reshape(outputs, [-1, 2*self.hidden])
         return y_predict
         
