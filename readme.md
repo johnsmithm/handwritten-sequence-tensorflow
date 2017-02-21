@@ -25,13 +25,13 @@ python run.py --sample --shuffle_batch --batch_size 1 --input_path data/handwrit
 
 ##Google cloud ML:
 ```shell
-gcloud beta ml jobs submit training handwrittenGRUGRID2 \
+gcloud beta ml jobs submit training handwritten3x200GRUGRID2 \
   --package-path=trainer \
   --module-name=trainer.run \
   --staging-bucket=gs://my-first-bucket-mosnoi/ \
   --region=us-central1 \
   --scale-tier=BASIC_GPU \
-  -- /
+  -- \
   --input_path gs://my-first-bucket-mosnoi/handwritten/m2/tf-data/handwritten-test-{}.tfrecords \
   --input_path_test gs://my-first-bucket-mosnoi/handwritten/m2/tf-data/handwritten-test-55.tfrecords \
   --board_path gs://my-first-bucket-mosnoi/handwritten/m2/TFboard2 \
@@ -47,11 +47,11 @@ gcloud beta ml jobs submit training handwrittenGRUGRID2 \
   --layers 3 \
   --hidden 200 \
   --rnn_cell GRUGRID2 \
-  --optimizer ADAM \ 
+  --optimizer ADAM \
   --initializer  graves \
   --bias 0.1 \
   --shuffle_batch \
-  --gpu 
+  --gpu
   ```
   
   ```shell
