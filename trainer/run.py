@@ -2,6 +2,7 @@ from __future__ import absolute_import
 from __future__ import division
 from __future__ import print_function
 
+import os
 import os.path
 import subprocess
 import tempfile
@@ -70,6 +71,8 @@ class Model(object):
     self.decay = args.decay
     self.initializer = args.initializer
     self.bias = args.bias
+    self.shuffle_batch = args.shuffle_batch
+    self.ctc_decoder = args.ctc_decoder
     print(args)
     
   def weight_variable(self,shape,name="v"):
@@ -162,8 +165,12 @@ class Model(object):
                 raise Exception("model type not supported: {}".format(self.optimizer))
         
         with tf.name_scope('Prediction'):
-            #decoded, log_prob = ctc_ops.ctc_greedy_decoder(logits, seq_len)
-            decoded, log_prob = ctc_ops.ctc_beam_search_decoder(logits, seq_len)
+            if self.ctc_decoder == 'greedy':
+                decoded, log_prob = ctc_ops.ctc_greedy_decoder(logits, seq_len)
+            elif self.ctc_decoder == 'beam_search':
+                decoded, log_prob = ctc_ops.ctc_beam_search_decoder(logits, seq_len)
+            else:
+                raise Exception("model type not supported: {}".format(self.ctc_decoder))
 
             # Inaccuracy: label error rate
             ler = tf.reduce_mean(tf.edit_distance(tf.cast(decoded[0], tf.int32),
@@ -215,8 +222,20 @@ class Model(object):
   def inputs(self,fileI,test=False):
     with tf.name_scope('batch'):
         imageInput, seq_len , target = self.read_and_decode_single_example(fileI,test)
-        
-        imageInputs, seq_lens , targets = tf.train.batch([imageInput,seq_len,target], batch_size=self.batch_size)
+        if self.shuffle_batch:
+            # min_after_dequeue defines how big a buffer we will randomly sample
+            #   from -- bigger means better shuffling but slower start up and more
+            #   memory used.
+            # capacity must be larger than min_after_dequeue and the amount larger
+            #   determines the maximum we will prefetch.  Recommendation:
+            #   min_after_dequeue + (num_threads + a small safety margin) * batch_size
+            min_after_dequeue = 10
+            capacity = min_after_dequeue + 3 * self.batch_size
+            imageInputs, seq_lens , targets = tf.train.shuffle_batch(
+            [imageInput,seq_len,target], batch_size=self.batch_size, capacity=capacity,
+            min_after_dequeue=min_after_dequeue)
+        else:
+            imageInputs, seq_lens , targets = tf.train.batch([imageInput,seq_len,target], batch_size=self.batch_size)
         
         imageInputs  = tf.cast(imageInputs, tf.float32)
         seq_lens = tf.cast(seq_lens, tf.int32)      
@@ -260,27 +279,31 @@ class Model(object):
                 
             if self.rnn_cell == "LSTM":
                 cell = tf.nn.rnn_cell.LSTMCell(self.hidden, state_is_tuple=True,initializer=myInitializer)
+            elif self.rnn_cell == "BasicLSTM":
+                cell = tf.nn.rnn_cell.BasicLSTMCell(self.hidden,forget_bias=1.0,state_is_tuple=True)
             elif self.rnn_cell == "GRU":
                 cell = tf.nn.rnn_cell.GRUCell(self.hidden)
-            elif self.rnn_cell == "GRIDLSTM":
+            elif self.rnn_cell == "LSTMGRID2":
                 cell = grid_rnn.Grid2LSTMCell(self.hidden,use_peepholes=True,forget_bias=1.0)
-            elif self.rnn_cell == "GRIDGRU":
+            elif self.rnn_cell == "LSTMGRID":
+                cell = grid_rnn.GridLSTMCell(self.hidden,use_peepholes=True,forget_bias=1.0)
+            elif self.rnn_cell == "GRUGRID2":
                 cell = grid_rnn.Grid2GRUCell(self.hidden)
             else:
                 raise Exception("model type not supported: {}".format(self.rnn_cell))
             if self.keep_prob!=1 and self.train_b:
                 cell = tf.nn.rnn_cell.DropoutWrapper(cell=cell, output_keep_prob=self.keep_prob)
-
+            
             stackf = tf.nn.rnn_cell.MultiRNNCell([cell] * (self.layers),
-                                            state_is_tuple=(self.rnn_cell == "LSTM"))
+                                            state_is_tuple=(self.rnn_cell[-4:] == "LSTM"))
             stackb = tf.nn.rnn_cell.MultiRNNCell([cell] * (self.layers),
-                                                state_is_tuple=(self.rnn_cell == "LSTM"))
+                                                state_is_tuple=(self.rnn_cell[-4:] == "LSTM"))
 
             self.reset_state_stackf = stackf.zero_state(self.batch_size, dtype=tf.float32)
             
             self.reset_state_stackb = stackb.zero_state(self.batch_size, dtype=tf.float32)
             if self.insertLastState:
-                if self.rnn_cell != "LSTM":
+                if self.rnn_cell[-4:] != "LSTM":
                     raise Exception("model type not supported for insertion of last state: {}".format(self.rnn_cell))
                     
                 self.state_stackb = [[tf.placeholder(tf.float32,
@@ -332,6 +355,37 @@ class Model(object):
   def optimize(self):
     return self.optimizer
 
+  def sample(self,sample=None,nrs=1):
+        vocabulary = {}
+        nrC=1    
+        c = 'a'
+        while ord(c) != ord('z')+1:
+            vocabulary[c] = nrC
+            nrC = nrC + 1
+            c = chr(ord(c)+1)
+
+        vocabulary[' '] = nrC
+        nrC += 1
+        vocabulary[''] = nrC
+        vocabulary['%%'] = 0
+        def getIndex(c,voc):
+            for name, age in voc.iteritems():
+                if age == c:
+                    return name
+            print("-"*30,"error-",c)
+            return None
+        def decodePrediction(d):
+            str_decoded = ''.join([getIndex(x,vocabulary) for x in np.asarray(d)])
+            return str_decoded
+        #return decodePrediction
+        
+        self.graphMaker()
+        feed = {}
+        feed[self.train_batch]=False
+        yy_, xx, ss, yy = self.sess.run([self.decoded,self.videoInputs, self.seq_len, self.targets],feed_dict=feed)
+        return decodePrediction(yy_[0][1]), xx, ss, decodePrediction(yy[1])
+        
+
   def graphMaker(self):
         #self.graph = tf.Graph()
         with tf.Graph().as_default():
@@ -340,13 +394,13 @@ class Model(object):
             videoInputs_test, seq_len_test, targets_test = self.inputs(self.input_path_test)
             targets_train.name = "train-sparse"
             targets_test.name = 'test-sparse'
-            videoInputs, seq_len, targets = tf.cond(
+            self.videoInputs, self.seq_len, self.targets = tf.cond(
                 self.train_batch,
                 lambda:[videoInputs_train, seq_len_train, targets_train],
                 lambda:[videoInputs_test, seq_len_test, targets_test]
             )
             
-            self.loss([videoInputs, seq_len], targets)  
+            self.loss([self.videoInputs, self.seq_len], self.targets)  
             '''
             tf.cond(
                 self.train_batch,
@@ -407,7 +461,23 @@ class Model(object):
 
             tf.train.start_queue_runners(sess=self.sess)
             
-
+def run_sample(args):
+        model = Model(args)
+        y_, x, s, y = model.sample()
+        print('correct text:',y)
+        print('prediction  :',y_)
+        print('len:',s)
+        print('batch shape:',x.shape)
+        import matplotlib.cm as cm
+        import matplotlib as mpl
+        mpl.use('Agg')
+        import matplotlib.pyplot as plt
+        plt.figure(figsize=(16,4))
+        plt.imshow(np.asarray(x[0]).reshape((36,90))[:s[0]]+0.5, interpolation='nearest', aspect='auto', cmap=cm.jet)
+        plt.savefig("img.jpg")
+        plt.clf() ; plt.cla()
+        print("image saved:img.jpg")
+        
 def run_training(args):    
     
         model = Model(args)
@@ -419,6 +489,8 @@ def run_training(args):
             print(f.eval())
         return;
         '''
+        if not os.path.isdir(args.model_dir):#not sure is that works with buckets
+              os.makedirs(args.model_dir)
         model.graphMaker()
         state_b = None
         state_f = None
@@ -489,8 +561,31 @@ def run_training(args):
                 print('model saved!')
         
         #print(sess.run([indices]))
-        
-            
+
+def fast_run(args):
+    model = Model(args)
+    feed = {}
+    #feed[model.train_batch]=False
+    xx,ss,yy=model.inputs(args.input_path)
+    
+    sess = tf.Session()
+    init = tf.global_variables_initializer()
+    sess.run(init)
+    tf.train.start_queue_runners(sess=sess)
+    xxx,sss,yyy=sess.run([xx,ss,yy])
+    #print(yyy)
+    #print(yyy[1])
+    print('len:',xxx.shape)
+    import matplotlib.cm as cm
+    import matplotlib as mpl
+    mpl.use('Agg')
+    import matplotlib.pyplot as plt
+    plt.figure(figsize=(16,4))
+    #plt.imshow()
+    plt.imshow(np.asarray(xxx[0]).reshape((36,90))+0.5, interpolation='nearest', aspect='auto', cmap=cm.jet)
+    plt.savefig("img.jpg")
+    plt.clf() ; plt.cla()
+    
 def main(_):
     parser = argparse.ArgumentParser()
 
@@ -509,6 +604,7 @@ def main(_):
     parser.add_argument('--learning_rate', type=float, default=FLAGS.learning_rate, help='initial learning_rate')
     parser.add_argument('--momentum', type=float, default=0.9, help='momentum for RMSP optimizer')
     parser.add_argument('--decay', type=float, default=0.95, help='decay for RMSP optimizer')
+    parser.add_argument('--ctc_decoder', type=str, default='greedy', help='ctc_decoder value for ctc loss')
     parser.add_argument('--optimizer', type=str, default="ADAM", help='optimizer to use')
     parser.add_argument('--initializer', type=str, default="graves", help='initializer to use')
     parser.add_argument('--bias', type=float, default=0.1, help='initializer to use for bias')
@@ -518,6 +614,7 @@ def main(_):
     parser.add_argument('--max_steps', type=int, default=FLAGS.max_steps, help='number of iterations')
     parser.add_argument('--display_step', type=int, default=FLAGS.display_step, help='number of iterations to display after')
     parser.add_argument('--batch_size', type=int, default=FLAGS.batch_size, help='the size of the batch')
+    parser.add_argument('--shuffle_batch', dest='shuffle_batch', action='store_true', help='train the model')
     
     #files param
     parser.add_argument('--model_dir', type=str, default=FLAGS.model_dir, help='location to save model')
@@ -535,10 +632,13 @@ def main(_):
     parser.set_defaults(train=True)
     parser.set_defaults(insertLastState=False)
     parser.set_defaults(gpu=False)
+    parser.set_defaults(shuffle_batch=False)
     parser.set_defaults(distributed=False)
     args = parser.parse_args()
-    
-    run_training(args) if args.train else print("todo: show sample from the model")
+    if False:
+        fast_run(args)
+        return
+    run_training(args) if args.train else run_sample(args)
 
 
 if __name__ == '__main__':

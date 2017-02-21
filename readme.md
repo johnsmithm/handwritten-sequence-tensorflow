@@ -6,6 +6,17 @@ In order to make TFRecord file use the function from util.py
 
 In order to run the training: python trainer/run.py --input_path data/handwritten-test.tfrecords --input_path_test data/handwritten-test.tfrecords --model_dir models --board_path TFboard --filenameNr 1 --save_step 500  --batch_size 10 --max_steps 1000 --display_step 100
 
+In order to get a sample from trained model:
+python run.py --sample --shuffle_batch --batch_size 1 --input_path data/handwritten-test.tfrecords --input_path_test data/handwritten-test.tfrecords --model_dir models --board_path TFboard --filenameNr 1
+
+params:
+  --rnn_cell [LSTM,GRU,LSTMGRID2,GRUGRID2,BasicLSTM,LSTMGRID]
+  --optimizer [ADAM,RMSP]
+  --initializer  [graves]
+  --sample {make a sample}
+  --shuffle_batch {shuffle the batch}
+  --insertLastState {insert last state at next training step}
+  --ctc_decoder [greedy,beam_search]
 
 Google cloud ML:
 
@@ -36,7 +47,8 @@ gcloud beta ml jobs submit training handwrittenv16 \
   --bias 0.1 \
   --gpu 
   
-  //--optimizer RMSP --momentum 0.02 --decay 
-  // python run.py --insertLastState
+  //--optimizer RMSP --momentum 0.9 --decay 0.95
+  // python run.py --layers 1 --hidden 20 --rnn_cell GRUGRID2 --optimizer RMSP --insertLastState
+  // python run.py  --shuffle_batch  --sample --batch_size 1 
   
   
