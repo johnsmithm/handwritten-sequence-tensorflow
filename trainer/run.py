@@ -623,7 +623,7 @@ def main(_):
     parser.add_argument('--input_path', type=str, default=FLAGS.input_path, help='location to get data for training')
     parser.add_argument('--input_path_test', type=str, default=FLAGS.input_path_test, help='location to get data for testing')
     parser.add_argument('--board_path', type=str, default=FLAGS.board_path, help='location to save statistics')
-    parser.add_argument('--filenameNr', type=str, default=1, help='if more than one use format(i) to make the files input')
+    parser.add_argument('--filenameNr', type=int, default=1, help='if more than one use format(i) to make the files input')
     
     #static param
     parser.add_argument('--width', type=int, default=90, help='image width')
