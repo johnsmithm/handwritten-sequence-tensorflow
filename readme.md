@@ -25,17 +25,17 @@ python run.py --sample --shuffle_batch --batch_size 1 --input_path data/handwrit
 
 ##Google cloud ML:
 ```shell
-gcloud beta ml jobs submit training handwrittenv16 \
+gcloud beta ml jobs submit training handwrittenGRUGRID2 \
   --package-path=trainer \
   --module-name=trainer.run \
   --staging-bucket=gs://my-first-bucket-mosnoi/ \
   --region=us-central1 \
-  --scale-tier=BASIC_GPU
+  --scale-tier=BASIC_GPU \
   -- /
-  --input_path gs://my-first-bucket-mosnoi/handwritten/m1/tf-data/handwritten-test-{}.tfrecords \
-  --input_path_test gs://my-first-bucket-mosnoi/handwritten/m1/tf-data/handwritten-test-55.tfrecords \
-  --board_path gs://my-first-bucket-mosnoi/handwritten/m1/TFboard \
-  --model_dir gs://my-first-bucket-mosnoi/handwritten/m1/models \
+  --input_path gs://my-first-bucket-mosnoi/handwritten/m2/tf-data/handwritten-test-{}.tfrecords \
+  --input_path_test gs://my-first-bucket-mosnoi/handwritten/m2/tf-data/handwritten-test-55.tfrecords \
+  --board_path gs://my-first-bucket-mosnoi/handwritten/m2/TFboard2 \
+  --model_dir gs://my-first-bucket-mosnoi/handwritten/m2/models2 \
   --filenameNr 50 \
   --save_step 15000 \
   --display_step 100 \
@@ -46,16 +46,17 @@ gcloud beta ml jobs submit training handwrittenv16 \
   --keep_prob 0.8 \
   --layers 3 \
   --hidden 200 \
-  --rnn_cell LSTM \
+  --rnn_cell GRUGRID2 \
   --optimizer ADAM \ 
   --initializer  graves \
   --bias 0.1 \
+  --shuffle_batch \
   --gpu 
   ```
   
   ```shell
   //--optimizer RMSP --momentum 0.9 --decay 0.95
   // python run.py --layers 1 --hidden 20 --rnn_cell GRUGRID2 --optimizer RMSP --insertLastState
-  // python run.py  --shuffle_batch  --sample --batch_size 1 
+  // python run.py --shuffle_batch  --layers 3   --sample --batch_size 1 --hidden 200 --insertLastState
   ```
   

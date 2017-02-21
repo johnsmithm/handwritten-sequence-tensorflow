@@ -446,6 +446,8 @@ class Model(object):
             try:
                     ckpt = tf.train.get_checkpoint_state(self.model_dir)
                     load_path = ckpt.model_checkpoint_path
+                    #print(load_path)
+                    #load_path = 'models/checkpoint-34999'
                     self.saver.restore(self.sess, load_path)
             except:
                     print("no saved model to load. starting new session")
