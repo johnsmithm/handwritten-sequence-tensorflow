@@ -32,7 +32,7 @@ tensorboard --logdir=gs://my-first-bucket-mosnoi/handwritten/m2/TFboard2 --port=
 ```shell
 rm -rf gs://my-first-bucket-mosnoi/handwritten3x200GRUGRID2
 
-gcloud beta ml jobs submit training handwrittenRMSP3x200LSTM \
+gcloud beta ml jobs submit training handwrittenRMSP3x200LSTM1 \
   --package-path=trainer \
   --module-name=trainer.run \
   --staging-bucket=gs://my-first-bucket-mosnoi/ \
@@ -41,7 +41,7 @@ gcloud beta ml jobs submit training handwrittenRMSP3x200LSTM \
   -- \
   --input_path gs://my-first-bucket-mosnoi/handwritten/m2/tf-data/handwritten-test-{}.tfrecords \
   --input_path_test gs://my-first-bucket-mosnoi/handwritten/m2/tf-data/handwritten-test-55.tfrecords \
-  --board_path gs://my-first-bucket-mosnoi/handwritten/m2/TFboard2 \
+  --board_path gs://my-first-bucket-mosnoi/handwritten/m2/TFboard2_handwrittenRMSP3x200LSTM1 \
   --model_dir gs://my-first-bucket-mosnoi/handwritten/m2/models2 \
   --filenameNr 50 \
   --save_step 5000 \
@@ -51,7 +51,7 @@ gcloud beta ml jobs submit training handwrittenRMSP3x200LSTM \
   --learning_rate 0.001 \
   --keep_prob 0.8 \
   --layers 3 \
-  --hidden 200 \
+  --hidden 250 \
   --rnn_cell LSTM \
   --optimizer RMSP \
   --initializer  graves \

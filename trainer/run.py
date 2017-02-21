@@ -93,7 +93,7 @@ class Model(object):
       return tf.nn.max_pool(x, ksize=[1, h, w, 1],
                         strides=[1, h, w, 1], padding='SAME')
 
-  def convLayer(self,data,chanels_out,size_window=5,keep_prob=0.8,maxPool=False,scopeN="l1"):
+  def convLayer(self,data,chanels_out,size_window=5,keep_prob=0.8,maxPool=None,scopeN="l1"):
     """Implement convolutional layer
     @param data: [batch,h,w,chanels]
     @param chanels_out: number of out chanels
@@ -112,8 +112,8 @@ class Model(object):
         h_conv1 = tf.nn.relu(self.conv2d(data, W_conv1) + b_conv1)
         if keep_prob and keep_prob!=1 and self.train_b:
             h_conv1 = tf.nn.dropout(h_conv1, keep_prob)
-        if maxPool:
-            h_conv1 = self.max_pool_2x2(h_conv1)
+        if maxPool is not None:
+            h_conv1 = self.max_pool_2x2(h_conv1,maxPool[0],maxPool[1])
     return h_conv1
 
 
@@ -149,8 +149,8 @@ class Model(object):
             logits = tf.nn.dropout(logits, keep_prob)
 
         # Reshaping back to the original shape
-        logits = tf.reshape(logits, [ self.batch_size,self.width, num_classes])    
-        logits =  tf.transpose(logits, [1,0,2])
+        logits = tf.reshape(logits, [self.width, self.batch_size, num_classes])    
+        #logits =  tf.transpose(logits, [1,0,2])
 
         with tf.name_scope('CTC-loss'):
             loss = ctc_ops.ctc_loss(logits, targets, seq_len)
@@ -251,10 +251,10 @@ class Model(object):
         [imageInputs, seq_len] = batch_x
         tf.summary.image("images", imageInputs)
         with tf.name_scope('convLayers'):
-            conv1 = self.convLayer(imageInputs, 32 ,              scopeN="l1",keep_prob=self.keep_prob,maxPool=True)
-            conv2 = self.convLayer(conv1,       64 ,              scopeN="l2",keep_prob=self.keep_prob,maxPool=True)
-            conv3 = self.convLayer(conv2,      128 ,size_window=3,scopeN="l3",keep_prob=self.keep_prob,maxPool=False)
-            conv4 = self.convLayer(conv3,      256 ,size_window=3,scopeN="l4",keep_prob=self.keep_prob,maxPool=False)
+            conv1 = self.convLayer(imageInputs, 32 ,              scopeN="l1",keep_prob=self.keep_prob,maxPool=[2,1])
+            conv2 = self.convLayer(conv1,       64 ,              scopeN="l2",keep_prob=self.keep_prob,maxPool=[2,1])
+            conv3 = self.convLayer(conv2,      128 ,size_window=3,scopeN="l3",keep_prob=self.keep_prob,maxPool=None)
+            conv4 = self.convLayer(conv3,      256 ,size_window=2,scopeN="l4",keep_prob=self.keep_prob,maxPool=None)
         
         with tf.name_scope('preprocess'):
             hh,ww,chanels = conv4.get_shape().as_list()[1:4]
