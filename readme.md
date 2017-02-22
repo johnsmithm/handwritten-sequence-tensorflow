@@ -47,7 +47,7 @@ gcloud beta ml jobs submit training readlipsAdam3x250LSTM \
   --save_step 5000 \
   --display_step 100 \
   --max_steps 10000 \
-  --batch_size 50 \
+  --batch_size 30 \
   --learning_rate 0.001 \
   --keep_prob 0.8 \
   --layers 3 \

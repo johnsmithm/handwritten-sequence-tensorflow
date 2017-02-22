@@ -252,7 +252,8 @@ class Model(object):
   def inference(self, batch_x):
        
         [imageInputs, seq_len] = batch_x
-        tf.summary.image("images", imageInputs)
+        tf.summary.image("images", tf.reshape(imageInputs , [self.batch_size*self.slices,
+                                                             self.height, self.width,self.inChanels]))
         with tf.name_scope('convLayers'):
             conv1 = self.convLayer(imageInputs, 32 ,              scopeN="l1",keep_prob=self.keep_prob,maxPool=[2,2])
             conv2 = self.convLayer(conv1,       64 ,              scopeN="l2",keep_prob=self.keep_prob,maxPool=[2,2])
