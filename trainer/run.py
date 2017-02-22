@@ -36,7 +36,7 @@ flags.DEFINE_integer('batch_size', 10, 'Batch size.  '
                      'Must divide evenly into the dataset sizes.')
 flags.DEFINE_string('rnn_cell', 'LSTM', 'rnn cell to use')
 flags.DEFINE_string('rnn_type', 'bidirectional', 'rnn type propagation to use')
-flags.DEFINE_string('model_dir', 'models', 'Directory to save the model.')
+flags.DEFINE_string('model_dir', 'model', 'Directory to save the model.')
 #gs://my-first-bucket-mosnoi/handwritten/m1/
 flags.DEFINE_string('board_path', 'TFboard', 'Directory to save board data ')
 flags.DEFINE_string('input_path_test', 'data/handwritten-test-0.tfrecords','get data for testing')
@@ -74,6 +74,8 @@ class Model(object):
     self.shuffle_batch = args.shuffle_batch
     self.ctc_decoder = args.ctc_decoder
     self.slices = args.slices
+    self.inChanels = args.inChanels
+    self.tempWindow = args.tempWindow
     print(args)
     
   def weight_variable(self,shape,name="v"):
@@ -87,12 +89,12 @@ class Model(object):
    initial = tf.constant(self.bias, shape=shape)
    return tf.Variable(initial, name=name+"_bias")
 
-  def conv2d(self,x, W):
-      return tf.nn.conv2d(x, W, strides=[1, 1, 1, 1], padding='SAME')
+  def conv3d(self,x, W):
+      return tf.nn.conv3d(x, W, strides=[1, 1, 1, 1, 1], padding='SAME')
 
   def max_pool_2x2(self,x,h=2,w=2):
-      return tf.nn.max_pool(x, ksize=[1, h, w, 1],
-                        strides=[1, h, w, 1], padding='SAME')
+      return tf.nn.max_pool3d(x, ksize=[1, 1, h, w, 1],
+                        strides=[1, 1, h, w, 1], padding='SAME')
 
   def convLayer(self,data,chanels_out,size_window=5,keep_prob=0.8,maxPool=None,scopeN="l1"):
     """Implement convolutional layer
@@ -108,9 +110,9 @@ class Model(object):
     with tf.name_scope("conv-"+scopeN):
         shape = data.get_shape().as_list()
         with tf.variable_scope("convVars-"+scopeN) as scope:
-            W_conv1 = self.weight_variable([size_window, size_window, shape[3], chanels_out], scopeN)
+            W_conv1 = self.weight_variable([self.tempWindow, size_window, size_window, shape[4], chanels_out], scopeN)
             b_conv1 = self.bias_variable([chanels_out], scopeN)
-        h_conv1 = tf.nn.relu(self.conv2d(data, W_conv1) + b_conv1)
+        h_conv1 = tf.nn.relu(self.conv3d(data, W_conv1) + b_conv1)
         if keep_prob and keep_prob!=1 and self.train_b:
             h_conv1 = tf.nn.dropout(h_conv1, keep_prob)
         if maxPool is not None:
@@ -200,13 +202,13 @@ class Model(object):
                 # tf.VarLenFeature could be used
                 'seq_len': tf.FixedLenFeature([1], tf.int64),
                 'target': tf.VarLenFeature(tf.int64),     
-                'imageInput': tf.FixedLenFeature([self.height*self.slices*self.width], tf.float32)
+                'videoInputs': tf.FixedLenFeature([self.height*self.slices*self.width*self.inChanels], tf.float32)
             })
         # now return the converted data
-        imageInput = features['imageInput']
+        videoInputs = features['videoInputs']
         seq_len     = features['seq_len']
         target     = features['target']
-    return imageInput, seq_len , target
+    return videoInputs, seq_len , target
 
   def variable_summaries(var):
       """Attach a lot of summaries to a Tensor (for TensorBoard visualization)."""
@@ -222,7 +224,7 @@ class Model(object):
     
   def inputs(self,fileI,test=False):
     with tf.name_scope('batch'):
-        imageInput, seq_len , target = self.read_and_decode_single_example(fileI,test)
+        videoInput, seq_len , target = self.read_and_decode_single_example(fileI,test)
         if self.shuffle_batch:
             # min_after_dequeue defines how big a buffer we will randomly sample
             #   from -- bigger means better shuffling but slower start up and more
@@ -232,20 +234,20 @@ class Model(object):
             #   min_after_dequeue + (num_threads + a small safety margin) * batch_size
             min_after_dequeue = 10
             capacity = min_after_dequeue + 3 * self.batch_size
-            imageInputs, seq_lens , targets = tf.train.shuffle_batch(
-            [imageInput,seq_len,target], batch_size=self.batch_size, capacity=capacity,
+            videoInputs, seq_lens , targets = tf.train.shuffle_batch(
+            [videoInput,seq_len,target], batch_size=self.batch_size, capacity=capacity,
             min_after_dequeue=min_after_dequeue)
         else:
-            imageInputs, seq_lens , targets = tf.train.batch([imageInput,seq_len,target], batch_size=self.batch_size)
+            videoInputs, seq_lens , targets = tf.train.batch([videoInput,seq_len,target], batch_size=self.batch_size)
         
-        imageInputs  = tf.cast(imageInputs, tf.float32)
+        videoInputs  = tf.cast(videoInputs, tf.float32)
         seq_lens = tf.cast(seq_lens, tf.int32)      
         targets = tf.cast(targets, tf.int32)      
         seq_lens = tf.reshape(seq_lens,[self.batch_size])             
         
-        imageInputs = tf.reshape(imageInputs , [self.batch_size*self.slices,self.height, self.width,1])
+        videoInputs = tf.reshape(videoInputs , [self.batch_size,self.slices,self.height, self.width,self.inChanels])
         
-        return imageInputs, seq_lens, targets
+        return videoInputs, seq_lens, targets
     
   def inference(self, batch_x):
        
@@ -254,11 +256,11 @@ class Model(object):
         with tf.name_scope('convLayers'):
             conv1 = self.convLayer(imageInputs, 32 ,              scopeN="l1",keep_prob=self.keep_prob,maxPool=[2,2])
             conv2 = self.convLayer(conv1,       64 ,              scopeN="l2",keep_prob=self.keep_prob,maxPool=[2,2])
-            conv3 = self.convLayer(conv2,      128 ,size_window=3,scopeN="l3",keep_prob=self.keep_prob,maxPool=[2,1])
-            conv4 = self.convLayer(conv3,      256 ,size_window=2,scopeN="l4",keep_prob=self.keep_prob,maxPool=[2,1])
+            conv3 = self.convLayer(conv2,      128 ,size_window=3,scopeN="l3",keep_prob=self.keep_prob,maxPool=[2,2])
+            conv4 = self.convLayer(conv3,      256 ,size_window=2,scopeN="l4",keep_prob=self.keep_prob,maxPool=None)
         
         with tf.name_scope('preprocess'):
-            hh,ww,chanels = conv4.get_shape().as_list()[1:4]
+            hh,ww,chanels = conv4.get_shape().as_list()[2:5]
             #assert ww == self.width,'image does not have to become smaller in width'
             assert chanels == 256
             
@@ -611,6 +613,7 @@ def main(_):
     parser.add_argument('--learning_rate', type=float, default=FLAGS.learning_rate, help='initial learning_rate')
     parser.add_argument('--momentum', type=float, default=0.9, help='momentum for RMSP optimizer')
     parser.add_argument('--decay', type=float, default=0.95, help='decay for RMSP optimizer')
+    parser.add_argument('--tempWindow', type=int, default=3, help='temporal window size for conv 3d')
     parser.add_argument('--ctc_decoder', type=str, default='greedy', help='ctc_decoder value for ctc loss')
     parser.add_argument('--optimizer', type=str, default="ADAM", help='optimizer to use')
     parser.add_argument('--initializer', type=str, default="graves", help='initializer to use')
@@ -631,9 +634,10 @@ def main(_):
     parser.add_argument('--filenameNr', type=int, default=1, help='if more than one use format(i) to make the files input')
     
     #static param
-    parser.add_argument('--width', type=int, default=8, help='image width')
-    parser.add_argument('--height', type=int, default=36, help='image height')
-    parser.add_argument('--slices', type=int, default=23, help='image width')
+    parser.add_argument('--width', type=int, default=80, help='image width')
+    parser.add_argument('--height', type=int, default=50, help='image height')
+    parser.add_argument('--inChanels', type=int, default=3, help='image inChanels')
+    parser.add_argument('--slices', type=int, default=75, help='image width')
     parser.add_argument('--num_classes', type=int, default=FLAGS.num_classes, help='number of classes')
     
     #defaults
