@@ -59,7 +59,7 @@ gcloud beta ml jobs submit training readlipsAdam3x250LSTM \
   --shuffle_batch \
   --gpu
   ```
-  
+   
   ```shell
   //--optimizer RMSP --momentum 0.9 --decay 0.95
   // python run.py --layers 1 --hidden 20 --rnn_cell GRUGRID2 --optimizer RMSP --insertLastState
