@@ -43,8 +43,8 @@ flags.DEFINE_string('rnn_type', 'bidirectional', 'rnn type propagation to use')
 flags.DEFINE_string('model_dir', 'models', 'Directory to save the model.')
 #gs://my-first-bucket-mosnoi/handwritten/m1/
 flags.DEFINE_string('board_path', 'TFboard', 'Directory to save board data ')
-flags.DEFINE_string('input_path_test', 'data/handwritten-test-0.tfrecords','get data for testing')
-flags.DEFINE_string('input_path', 'data/handwritten-test-0.tfrecords',
+flags.DEFINE_string('input_path_test', 'data/handwritten-test-30.tfrecords','get data for testing')
+flags.DEFINE_string('input_path', 'data/handwritten-test-30.tfrecords',
                     'get data for training, if filenameNr>1 the input data '
                     'should have {} in order to farmat it, and get more than one'
                     'file for training ')
@@ -1036,9 +1036,9 @@ def main(_):
     parser.add_argument('--filenameNr', type=int, default=1, help='if more than one use format(i) to make the files input')
     
     #static param
-    parser.add_argument('--width', type=int, default=8, help='image width')
+    parser.add_argument('--width', type=int, default=12, help='image width')
     parser.add_argument('--height', type=int, default=36, help='image height')
-    parser.add_argument('--slices', type=int, default=23, help='image width')
+    parser.add_argument('--slices', type=int, default=28, help='image width')
     parser.add_argument('--num_classes', type=int, default=FLAGS.num_classes, help='number of classes')
     
     #defaults
