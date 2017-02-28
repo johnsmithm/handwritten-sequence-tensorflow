@@ -45,6 +45,182 @@ flags.DEFINE_string('input_path', 'data/handwritten-test.tfrecords',
                     'should have {} in order to farmat it, and get more than one'
                     'file for training ')
 
+#MDLSTM
+def ln(tensor, scope = None, epsilon = 1e-5):
+    """ Layer normalizes a 2D tensor along its second axis """
+    assert(len(tensor.get_shape()) == 2)
+    m, v = tf.nn.moments(tensor, [1], keep_dims=True)
+    if not isinstance(scope, str):
+        scope = ''
+    with tf.variable_scope(scope + 'layer_norm'):
+        scale = tf.get_variable('scale',
+                                shape=[tensor.get_shape()[1]],
+                                initializer=tf.constant_initializer(1))
+        shift = tf.get_variable('shift',
+                                shape=[tensor.get_shape()[1]],
+                                initializer=tf.constant_initializer(0))
+    LN_initial = (tensor - m) / tf.sqrt(v + epsilon)
+
+    return LN_initial * scale + shift
+
+
+class MultiDimentionalLSTMCell(tf.nn.rnn_cell.RNNCell):
+    """
+    Adapted from TF's BasicLSTMCell to use Layer Normalization.
+    Note that state_is_tuple is always True.
+    """
+
+    def __init__(self, num_units, forget_bias=0.0, activation=tf.nn.tanh):
+        self._num_units = num_units
+        self._forget_bias = forget_bias
+        self._activation = activation
+
+    @property
+    def state_size(self):
+        return tf.nn.rnn_cell.LSTMStateTuple(self._num_units, self._num_units)
+
+    @property
+    def output_size(self):
+        return self._num_units
+
+    def __call__(self, inputs, state, scope=None):
+        """Long short-term memory cell (LSTM).
+        @param: imputs (batch,n)
+        @param state: the states and hidden unit of the two cells
+        """
+        with tf.variable_scope(scope or type(self).__name__):
+            c1,c2,h1,h2 = state
+
+            # change bias argument to False since LN will add bias via shift
+            concat = tf.nn.rnn_cell._linear([inputs, h1, h2], 5 * self._num_units, False)
+
+            i, j, f1, f2, o = tf.split(1, 5, concat)
+
+            # add layer normalization to each gate
+            i =  ln(i, scope = 'i/')
+            j =  ln(j, scope = 'j/')
+            f1 = ln(f1, scope = 'f1/')
+            f2 = ln(f2, scope = 'f2/')
+            o =  ln(o, scope = 'o/')
+
+            new_c = (c1 * tf.nn.sigmoid(f1 + self._forget_bias) + 
+                     c2 * tf.nn.sigmoid(f2 + self._forget_bias) + tf.nn.sigmoid(i) *
+                   self._activation(j))
+
+            # add layer_normalization in calculation of new hidden state
+            new_h = self._activation(ln(new_c, scope = 'new_h/')) * tf.nn.sigmoid(o)
+            new_state = tf.nn.rnn_cell.LSTMStateTuple(new_c, new_h)
+
+            return new_h, new_state
+
+        
+def multiDimentionalRNN_whileLoop(rnn_size,input_data,sh,dims=None,scopeN="layer1"):
+        """Implements naive multidimentional recurent neural networks
+        
+        @param rnn_size: the hidden units
+        @param input_data: the data to process of shape [batch,h,w,chanels]
+        @param sh: [heigth,width] of the windows 
+        @param dims: dimentions to reverse the input data,eg.
+            dims=[False,True,True,False] => true means reverse dimention
+        @param scopeN : the scope
+        
+        returns [batch,h/sh[0],w/sh[1],chanels*sh[0]*sh[1]] the output of the lstm
+        """
+        with tf.variable_scope("MultiDimentionalLSTMCell-"+scopeN):
+            cell = MultiDimentionalLSTMCell(rnn_size)
+        
+            shape = input_data.get_shape().as_list()
+
+            if shape[1]%sh[0] != 0:
+                offset = tf.zeros([shape[0], sh[0]-(shape[1]%sh[0]), shape[2], shape[3]])
+                input_data = tf.concat(1,[input_data,offset])
+                shape = input_data.get_shape().as_list()
+            if shape[2]%sh[1] != 0:
+                offset = tf.zeros([shape[0], shape[1], sh[1]-(shape[2]%sh[1]), shape[3]])
+                input_data = tf.concat(2,[input_data,offset])
+                shape = input_data.get_shape().as_list()
+
+            h,w = int(shape[1]/sh[0]),int(shape[2]/sh[1])
+            features = sh[1]*sh[0]*shape[3]
+            batch_size = shape[0]
+
+            x =  tf.reshape(input_data, [batch_size,h,w, features])
+            if dims is not None:
+                assert dims[0] == False and dims[3] == False
+                x = tf.reverse(x, dims)
+            x = tf.transpose(x, [1,2,0,3])
+            x =  tf.reshape(x, [-1, features])
+            x = tf.split(0, h*w, x)     
+
+            sequence_length = tf.ones(shape=(batch_size,), dtype=tf.int32)*shape[0]
+            inputs_ta = tf.TensorArray(dtype=tf.float32, size=h*w,name='input_ta')
+            inputs_ta = inputs_ta.unpack(x)
+            states_ta = tf.TensorArray(dtype=tf.float32, size=h*w+1,name='state_ta',clear_after_read=False)
+            outputs_ta = tf.TensorArray(dtype=tf.float32, size=h*w,name='output_ta')
+
+            states_ta = states_ta.write(h*w,  tf.nn.rnn_cell.LSTMStateTuple(tf.zeros([batch_size,rnn_size], tf.float32),
+                                                         tf.zeros([batch_size,rnn_size], tf.float32)))
+            def getindex1(t,w):
+                return tf.cond(tf.less_equal(tf.constant(w),t),
+                               lambda:t-tf.constant(w),
+                               lambda:tf.constant(h*w))
+            def getindex2(t,w):
+                return tf.cond(tf.less(tf.constant(0),tf.mod(t,tf.constant(w))),
+                               lambda:t-tf.constant(1),
+                               lambda:tf.constant(h*w))
+
+            time = tf.constant(0)
+
+            def body(time, outputs_ta, states_ta):
+                constant_val = tf.constant(0)
+                stateUp = tf.cond(tf.less_equal(tf.constant(w),time),
+                                  lambda: states_ta.read(getindex1(time,w)),
+                                  lambda: states_ta.read(h*w))
+                stateLast = tf.cond(tf.less(constant_val,tf.mod(time,tf.constant(w))),
+                                    lambda: states_ta.read(getindex2(time,w)),
+                                    lambda: states_ta.read(h*w)) 
+
+                currentState = stateUp[0],stateLast[0],stateUp[1],stateLast[1]
+                out , state = cell(inputs_ta.read(time),currentState)  
+                outputs_ta = outputs_ta.write(time,out)
+                states_ta = states_ta.write(time,state)
+                return time + 1, outputs_ta, states_ta
+
+            def condition(time,outputs_ta,states_ta):
+                return tf.less(time ,  tf.constant(h*w)) 
+
+            result , outputs_ta, states_ta = tf.while_loop(condition, body, [time,outputs_ta,states_ta]
+                                                           ,parallel_iterations=1)
+
+
+            outputs = outputs_ta.pack()
+            states  = states_ta.pack()
+
+            y =  tf.reshape(outputs, [h,w,batch_size,rnn_size])
+            y = tf.transpose(y, [2,0,1,3])
+            if dims is not None:
+                y = tf.reverse(y, dims)
+
+            return y#,states
+
+    
+def tanAndSum(rnn_size,input_data,scope,sh):
+        outs = []
+        for i in range(2):
+            for j in range(2):
+                dims = [False]*4
+                if i!=0:
+                    dims[1] = True
+                if j!=0:
+                    dims[2] = True                 
+                outputs  = multiDimentionalRNN_whileLoop(rnn_size,input_data,sh,
+                                                       dims,scope+"-multi-l{0}".format(i*2+j))
+                outs.append(outputs)
+        #return outs
+        outs = tf.pack(outs, axis=0)
+        mean = tf.reduce_mean(outs, 0)
+        return tf.nn.tanh(mean)
+#MDLSTM end
 
 class Model(object):
   def __init__(self, args):
@@ -133,7 +309,7 @@ class Model(object):
     """
     with tf.name_scope('Train'):
         with tf.variable_scope("ctc_loss-"+scopeN) as scope:
-            W = tf.Variable(tf.truncated_normal([self.hidden*2,
+            W = tf.Variable(tf.truncated_normal([self.hidden,
                                                  num_classes],
                                                 stddev=0.1))
             # Zero initialization
@@ -149,8 +325,8 @@ class Model(object):
             logits = tf.nn.dropout(logits, keep_prob)
 
         # Reshaping back to the original shape
-        logits = tf.reshape(logits, [self.width, self.batch_size, num_classes])    
-        #logits =  tf.transpose(logits, [1,0,2])
+        logits = tf.reshape(logits, [ self.batch_size,-1, num_classes])    
+        logits =  tf.transpose(logits, [1,0,2])
 
         with tf.name_scope('CTC-loss'):
             loss = ctc_ops.ctc_loss(logits, targets, seq_len)
@@ -251,101 +427,29 @@ class Model(object):
         [imageInputs, seq_len] = batch_x
         tf.summary.image("images", imageInputs)
         with tf.name_scope('convLayers'):
-            conv1 = self.convLayer(imageInputs, 32 ,              scopeN="l1",keep_prob=self.keep_prob,maxPool=[2,1])
-            conv2 = self.convLayer(conv1,       64 ,              scopeN="l2",keep_prob=self.keep_prob,maxPool=[2,1])
-            conv3 = self.convLayer(conv2,      128 ,size_window=3,scopeN="l3",keep_prob=self.keep_prob,maxPool=None)
-            conv4 = self.convLayer(conv3,      256 ,size_window=2,scopeN="l4",keep_prob=self.keep_prob,maxPool=None)
+            conv1 = self.convLayer(imageInputs, 16 , scopeN="l1",keep_prob=self.keep_prob,maxPool=[2,2])
+            mdlstm1 = tanAndSum(32,conv1,'l1',sh=[2,2])
+            
+            conv2 = self.convLayer(mdlstm1, 64 , scopeN="l2",keep_prob=self.keep_prob,maxPool=None)
+            mdlstm2 = tanAndSum(128,conv2,'l2',sh=[2,2])
+            
+            conv3 = self.convLayer(mdlstm2, 256 , scopeN="l3",keep_prob=self.keep_prob,maxPool=None)
+            mdlstm3 = tanAndSum(256,conv3,'l3',sh=[1,1])
         
-        with tf.name_scope('preprocess'):
-            hh,ww,chanels = conv4.get_shape().as_list()[1:4]
-            assert ww == self.width,'image does not have to become smaller in width'
-            assert chanels == 256
+            self.hidden = 256
             
-            h_pool2_flat = tf.transpose(conv4, [2, 0, 1, 3])
-            h_pool2_flat = tf.reshape(h_pool2_flat, [ww, self.batch_size ,hh*chanels])
-            
-            # Permuting batch_size and n_steps
-            #x = tf.transpose(h_pool2_flat, [2, 0, 1])
-            # Reshape to (n_steps*batch_size, n_input)
-            x = tf.reshape(h_pool2_flat, [-1, hh*chanels])
-            # Split to get a list of 'n_steps' tensors of shape (batch_size, n_input)
-            x = tf.split(0, ww, x)
-            
-        with tf.name_scope('BRNN'):
-            if self.initializer == "graves":
-                myInitializer = tf.truncated_normal_initializer(mean=0., stddev=.075, seed=None, dtype=tf.float32)
-            else:
-                myInitializer = tf.truncated_normal(shape, stddev=0.1)
-                
-            if self.rnn_cell == "LSTM":
-                cell = tf.nn.rnn_cell.LSTMCell(self.hidden, state_is_tuple=True,initializer=myInitializer)
-            elif self.rnn_cell == "BasicLSTM":
-                cell = tf.nn.rnn_cell.BasicLSTMCell(self.hidden,forget_bias=1.0,state_is_tuple=True)
-            elif self.rnn_cell == "GRU":
-                cell = tf.nn.rnn_cell.GRUCell(self.hidden)
-            elif self.rnn_cell == "LSTMGRID2":
-                cell = grid_rnn.Grid2LSTMCell(self.hidden,use_peepholes=True,forget_bias=1.0)
-            elif self.rnn_cell == "LSTMGRID":
-                cell = grid_rnn.GridLSTMCell(self.hidden,use_peepholes=True,forget_bias=1.0)
-            elif self.rnn_cell == "GRUGRID2":
-                cell = grid_rnn.Grid2GRUCell(self.hidden)
-            else:
-                raise Exception("model type not supported: {}".format(self.rnn_cell))
-            if self.keep_prob!=1 and self.train_b:
-                cell = tf.nn.rnn_cell.DropoutWrapper(cell=cell, output_keep_prob=self.keep_prob)
-            
-            stackf = tf.nn.rnn_cell.MultiRNNCell([cell] * (self.layers),
-                                            state_is_tuple=(self.rnn_cell[-4:] == "LSTM"))
-            stackb = tf.nn.rnn_cell.MultiRNNCell([cell] * (self.layers),
-                                                state_is_tuple=(self.rnn_cell[-4:] == "LSTM"))
-
-            self.reset_state_stackf = stackf.zero_state(self.batch_size, dtype=tf.float32)
-            
-            self.reset_state_stackb = stackb.zero_state(self.batch_size, dtype=tf.float32)
-            if self.insertLastState:
-                if self.rnn_cell[-4:] != "LSTM":
-                    raise Exception("model type not supported for insertion of last state: {}".format(self.rnn_cell))
-                    
-                self.state_stackb = [[tf.placeholder(tf.float32,
-                                                     [self.batch_size, self.hidden])]*2 for i in range(self.layers)]
-                self.state_stackf = [[tf.placeholder(tf.float32,
-                                                     [self.batch_size, self.hidden])]*2 for i in range(self.layers)]
-
-                self.rnn_tuple_statef = tuple(
-                [tf.nn.rnn_cell.LSTMStateTuple(self.state_stackf[idx][0], self.state_stackf[idx][1])
-                 for idx in range(self.layers)]
-                )
-
-                self.rnn_tuple_stateb = tuple(
-                [tf.nn.rnn_cell.LSTMStateTuple(self.state_stackb[idx][0], self.state_stackb[idx][1])
-                 for idx in range(self.layers)]
-                )       
-                print("insertion of last state")
-                #todo: try just initial states
-                outputs, self.state_fw, self.state_bw  = tf.nn.bidirectional_rnn(stackf, stackb, x,
-                                                                                 sequence_length=seq_len,
-                                                                                 dtype=tf.float32,
-                                                                                 initial_state_fw=self.rnn_tuple_statef,
-                                                                                 initial_state_bw=self.rnn_tuple_stateb)
-            else:
-                print("no insertion of last state")
-                outputs, self.state_fw, self.state_bw  = tf.nn.bidirectional_rnn(stackf, stackb, x,
-                                                                                 sequence_length=seq_len,
-                                                                                 dtype=tf.float32,
-                                                                                 initial_state_fw=self.reset_state_stackf,
-                                                                                 initial_state_bw=self.reset_state_stackb)
-            #= states
-            y_predict = tf.reshape(outputs, [-1, 2*self.hidden])
-        return y_predict
+            seq_len = tf.ones([self.batch_size],dtype=tf.int32)*mdlstm3.get_shape().as_list()[2]            
+            y_predict = tf.reshape(mdlstm3, [-1, self.hidden])
+        return [y_predict,seq_len]
         
         
         
 
   def loss(self, batch_x, batch_y=None):
-    y_predict = self.inference(batch_x)
+    y_predict,seq_len = self.inference(batch_x)
     self.optimizer, cost, ler, self.decoded = self.ctc_loss(y_predict,
                                                             batch_y, 
-                                                            batch_x[1], 
+                                                            seq_len, 
                                                             self.num_classes, 
                                                             self.learning_rate)
     self.cost, self.ler = cost, ler
