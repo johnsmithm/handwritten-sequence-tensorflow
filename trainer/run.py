@@ -39,8 +39,8 @@ flags.DEFINE_string('rnn_type', 'bidirectional', 'rnn type propagation to use')
 flags.DEFINE_string('model_dir', 'models', 'Directory to save the model.')
 #gs://my-first-bucket-mosnoi/handwritten/m1/
 flags.DEFINE_string('board_path', 'TFboard', 'Directory to save board data ')
-flags.DEFINE_string('input_path_test', 'data/handwritten-test.tfrecords','get data for testing')
-flags.DEFINE_string('input_path', 'data/handwritten-test.tfrecords',
+flags.DEFINE_string('input_path_test', 'data/handwritten-test-16.tfrecords','get data for testing')
+flags.DEFINE_string('input_path', 'data/handwritten-test-16.tfrecords',
                     'get data for training, if filenameNr>1 the input data '
                     'should have {} in order to farmat it, and get more than one'
                     'file for training ')
@@ -438,7 +438,8 @@ class Model(object):
         
             self.hidden = 256
             
-            seq_len = tf.ones([self.batch_size],dtype=tf.int32)*mdlstm3.get_shape().as_list()[2]            
+            seq_len = tf.ones([self.batch_size],dtype=tf.int32)*\
+            mdlstm3.get_shape().as_list()[2]*mdlstm3.get_shape().as_list()[1]          
             y_predict = tf.reshape(mdlstm3, [-1, self.hidden])
         return [y_predict,seq_len]
         
