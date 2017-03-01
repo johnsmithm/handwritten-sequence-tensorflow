@@ -21,6 +21,9 @@ except ImportError:
     
 from tensorflow.contrib import grid_rnn
 
+from tensorflow.python.util import nest
+from math import sqrt
+
 
 flags = tf.app.flags
 FLAGS = flags.FLAGS
@@ -63,6 +66,52 @@ def ln(tensor, scope = None, epsilon = 1e-5):
 
     return LN_initial * scale + shift
 
+def _linear(args, output_size, bias, bias_start=0.0, scope=None):
+  """Linear map: sum_i(args[i] * W[i]), where W[i] is a variable.
+  Args:
+    args: a 2D Tensor or a list of 2D, batch x n, Tensors.
+    output_size: int, second dimension of W[i].
+    bias: boolean, whether to add a bias term or not.
+    bias_start: starting value to initialize the bias; 0 by default.
+    scope: VariableScope for the created subgraph; defaults to "Linear".
+  Returns:
+    A 2D Tensor with shape [batch x output_size] equal to
+    sum_i(args[i] * W[i]), where W[i]s are newly created matrices.
+  Raises:
+    ValueError: if some of the arguments has unspecified or wrong shape.
+  """
+  if args is None or (nest.is_sequence(args) and not args):
+    raise ValueError("`args` must be specified")
+  if not nest.is_sequence(args):
+    args = [args]
+
+  # Calculate the total size of arguments on dimension 1.
+  total_arg_size = 0
+  shapes = [a.get_shape().as_list() for a in args]
+  for shape in shapes:
+    if len(shape) != 2:
+      raise ValueError("Linear is expecting 2D arguments: %s" % str(shapes))
+    if not shape[1]:
+      raise ValueError("Linear expects shape[1] of arguments: %s" % str(shapes))
+    else:
+      total_arg_size += shape[1]
+
+  # Now the computation.
+  with tf.variable_scope(scope or "Linear"):
+    a = sqrt(6)/sqrt(total_arg_size/5.0 + output_size)
+    matrix = tf.get_variable("Matrix", [total_arg_size, output_size],
+                            initializer=tf.random_uniform_initializer(-a, a))
+    if len(args) == 1:
+      res = tf.matmul(args[0], matrix)
+    else:
+      res = tf.matmul(tf.concat(1, args), matrix)
+    if not bias:
+      return res
+    bias_term = tf.get_variable(
+        "Bias", [output_size],
+        initializer=tf.constant_initializer(bias_start))
+  return res + bias_term
+
 
 class MultiDimentionalLSTMCell(tf.nn.rnn_cell.RNNCell):
     """
@@ -92,7 +141,7 @@ class MultiDimentionalLSTMCell(tf.nn.rnn_cell.RNNCell):
             c1,c2,h1,h2 = state
 
             # change bias argument to False since LN will add bias via shift
-            concat = tf.nn.rnn_cell._linear([inputs, h1, h2], 5 * self._num_units, False)
+            concat = _linear([inputs, h1, h2], 5 * self._num_units, False)
 
             i, j, f1, f2, o = tf.split(1, 5, concat)
 
@@ -260,6 +309,7 @@ class Model(object):
 
   def bias_variable(self,shape,name="v"):
    initial = tf.constant(self.bias, shape=shape)
+   #tf.get_variable('weights', trainable=True)
    return tf.Variable(initial, name=name+"_bias")
 
   def conv2d(self,x, W):
@@ -336,9 +386,22 @@ class Model(object):
             if self.optimizer == "ADAM":
                 optimizer = tf.train.AdamOptimizer(learning_rate=initial_learning_rate,name="AdamOptimizer").minimize(cost)
             elif self.optimizer == "RMSP":
-                optimizer = tf.train.RMSPropOptimizer(learning_rate=initial_learning_rate, decay=self.decay, momentum=self.momentum).minimize(cost)
+                optimizer = tf.train.RMSPropOptimizer(learning_rate=initial_learning_rate, 
+                                                      decay=self.decay, momentum=self.momentum).minimize(cost)
             else:
                 raise Exception("model type not supported: {}".format(self.optimizer))
+                
+        """
+        opt = tf.train.MomentumOptimizer(FLAGS.learning_rate, MOMENTUM)
+        grads = opt.compute_gradients(loss_)
+        for grad, var in grads:
+            if grad is not None and not FLAGS.minimal_summaries:
+                tf.histogram_summary(var.op.name + '/gradients', grad)
+        apply_gradient_op = opt.apply_gradients(grads, global_step=global_step)
+        
+        for var in tf.trainable_variables():
+            tf.histogram_summary(var.op.name, var)
+        """
         
         with tf.name_scope('Prediction'):
             if self.ctc_decoder == 'greedy':
@@ -427,19 +490,21 @@ class Model(object):
         [imageInputs, seq_len] = batch_x
         tf.summary.image("images", imageInputs)
         with tf.name_scope('convLayers'):
-            conv1 = self.convLayer(imageInputs, 16 , scopeN="l1",keep_prob=self.keep_prob,maxPool=[2,2])
-            mdlstm1 = tanAndSum(32,conv1,'l1',sh=[2,2])
+            conv1 = self.convLayer(imageInputs, 15 ,size_window=3, scopeN="l1",keep_prob=None,maxPool=[2,2])
+            mdlstm1 = tanAndSum(30,conv1,'l1',sh=[1,1])
             
-            conv2 = self.convLayer(mdlstm1, 64 , scopeN="l2",keep_prob=self.keep_prob,maxPool=None)
-            mdlstm2 = tanAndSum(128,conv2,'l2',sh=[2,2])
+            conv2 = self.convLayer(mdlstm1, 45 ,size_window=3, scopeN="l2",keep_prob=self.keep_prob,maxPool=[2,2])
+            mdlstm2 = tanAndSum(60,conv2,'l2',sh=[1,1])
             
-            conv3 = self.convLayer(mdlstm2, 256 , scopeN="l3",keep_prob=self.keep_prob,maxPool=None)
-            mdlstm3 = tanAndSum(256,conv3,'l3',sh=[1,1])
+            conv3 = self.convLayer(mdlstm2, 75 ,size_window=3, scopeN="l3",keep_prob=self.keep_prob,maxPool=[2,2])
+            mdlstm3 = tanAndSum(90,conv3,'l3',sh=[1,1])
         
-            self.hidden = 256
+            self.hidden = 90
             
             seq_len = tf.ones([self.batch_size],dtype=tf.int32)*\
-            mdlstm3.get_shape().as_list()[2]*mdlstm3.get_shape().as_list()[1]          
+            mdlstm3.get_shape().as_list()[2]#*mdlstm3.get_shape().as_list()[1]      
+            mdlstm3 = tf.reduce_sum(mdlstm3, 1)#could also add = features+heigth
+            #self.ttt = mdlstm3
             y_predict = tf.reshape(mdlstm3, [-1, self.hidden])
         return [y_predict,seq_len]
         
@@ -525,8 +590,16 @@ class Model(object):
                     self.summary_op = tf.summary.merge_all()
             except AttributeError:
                     self.summary_op = tf.merge_all_summaries()
-
-            self.saver = tf.train.Saver()
+            '''       
+            convVars = []        
+            for var in tf.trainable_variables():
+                if var.op.name.find("convLayers") != -1:
+                    print(var.op.name,var.get_shape().as_list())
+                    convVars.append(var)
+            
+            self.saverConv = tf.train.Saver(convVars,write_version=tf.train.SaverDef.V2)
+            '''
+            self.saver = tf.train.Saver(tf.trainable_variables(),write_version=tf.train.SaverDef.V2)
             
             if self.gpu:
                 ### start session
@@ -567,6 +640,7 @@ class Model(object):
                     self.global_step = int(load_path.split('-')[-1]) 
 
             tf.train.start_queue_runners(sess=self.sess)
+            
             
 def run_sample(args):
         model = Model(args)
@@ -673,14 +747,17 @@ def fast_run(args):
     model = Model(args)
     feed = {}
     #feed[model.train_batch]=False
-    xx,ss,yy=model.inputs(args.input_path)
-    
-    sess = tf.Session()
-    init = tf.global_variables_initializer()
-    sess.run(init)
-    tf.train.start_queue_runners(sess=sess)
-    xxx,sss,yyy=sess.run([xx,ss,yy])
-    #print(yyy)
+    #xx,ss,yy=model.inputs(args.input_path)
+    model.graphMaker()
+    #sess = tf.Session()
+    #init = tf.global_variables_initializer()
+    #sess.run(init)
+    #tf.train.start_queue_runners(sess=sess)
+    for var in tf.trainable_variables():
+            print(var.op.name)
+    #t=model.sess.run(model.ttt)
+    #print(t.shape)
+    return
     #print(yyy[1])
     print('len:',xxx.shape)
     import matplotlib.cm as cm
